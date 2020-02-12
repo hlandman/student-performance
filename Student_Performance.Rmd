@@ -1,0 +1,799 @@
+---
+title: "STAT E-109 Project - Predicting Student Performance"
+author: "Isha Goyal, Hillel Landman & Rahul Sharma"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, tidy = TRUE)
+```
+
+# 1 Introduction
+
+In this study, we built a model to predict final grades of Portuguese students in Mathematics. In Portugal, students receive a final grade using a 20-point scale, where 20 is the highest score. The dataset contained 30 predictor variables including students' demographics family background and behaviors. We decided to exclude the first and second trimester scores ("G1" and "G2" variables)in order to narrow down the prediction to factors outside of scoring itself. (*Dataset details are available in Appendix I*) 
+ 
+The model predicts student performance based on two different scales:  
+1. Final Grade (G3-Continuous) using Least Squares and Regularization Regression techniques  
+2. Pass/Fail (G3-Binary) using Logistic regression & NeuralNets
+
+
+
+# 2 Approach
+
+## Exploratory Data Analysis  
+We initaited our data analysis by plotting data and visually identifying abnormalities, performing tests for multi-collianity and non-constant variance.(*Appendix II and Appendix III*) 
+A handful of observations showed positive "G1" and "G2" scores but final "G3" scores of zero. Since it is very unlikely that students with positive first and second trimester scores would be awarded with final scores of zero, we believe those observations are incorrect. We exculded those observations from the dataset.
+
+The highest VIF value was 5.1 (Fjob_other), so there was no concern of multicollinearity.
+The p-value for the NCV test was high, so we can assume constant variance.
+
+## Data Transformation
+
+We started off with a model without transformation and performed the Ramsey RESET test to verify the model specifications. The test showed a low p-value for the null hypothesis that no transformations were needed. We proceeded to transform X variables followed by the Y variable, continuing the process until the RESET test passed.
+
+The primary data transformations (transforming appropriate X variables to nominal or dummy variables) were based on visual data analysis. However, we used powerTransform (Box Cox) to analyze the data further. Most of the variables were either binary or nominal. There were only 2 dense continuos variables (age and absences) while the other were numeric (traveltime, studytime etc.) and similar to ordinal variables. We decided to treat them as numeric, since transformaing them into dummy variables did not add any value to model. We validated the model specifications using the RESET test.  
+
+We detected that we could produce the most predictive model by transforming Y to $\sqrt{Y}$. After modeling $\sqrt{Y}$ as a function of each X variable, the p value for the RESET test was still low. We therefore decided to experiment with various polynomial transformations until our model passed the RESET test.
+
+
+The model that passed the RESET used the following transformations (*See Appendix IV for more details*):  
+1. *Square Root* of Y variable  
+2. *3 degree polynomial* for absences (X variable)  
+3. *2 degree polynomial* for failure, studytime and goout (X variables)  
+
+
+## Model Building  
+
+To begin, we constructed a full linear regression model using all of the independent variables and ran an overall F-test. We then built a reduced model by dropping all variables with high p-values and ran a partial F-test to see if the reduced model was viable.
+
+#### Overall F-test
+
+An overall F test was conducted using the following hypotheses:  
+
+$H_0$: Independent variables is not needed to explain G3.  
+
+$H_a$: At Least one independent variable is needed to explain G3.  
+
+Since the F-statistic had a very low p-value, we rejected $H_0$, meaning at least one independent variable is needed to explain G3.
+
+#### Partial F-test 
+
+A partial F-test was conducted to determine if all X variables with high p-values could be removed. We used the following hypotheses:  
+
+$H_0$: We can remove all X variables with high p values.  
+
+$H_a$: We cannot remove all X variables with high p values.  
+
+
+For the reduced model, we regressed Y on X variables with p-values below 0.05 (absences, studytime, failures, schoolsup_no, famsup_yes, goout, Fjob_other, Fjob_services, Fjob_health, health_1).
+
+We calculated the anova for the full vs. reduced models, and the p-value of its F statistic came out to 0.0068, meaning we could reject $H_0$.
+
+### Other Models
+
+Once we were certain that we could not remove all the variables at once, we used the following techniques to build models and compare their performances:
+
+1. Full Model without any transformations (*failed Ramsey RESET test*).
+2. Model with only Y Variable transformed to $\sqrt{Y}$ (*failed Ramsey RESET test*).
++ This model outperformed the model with X variables transformed so we included it in our analysis.
+3. Full Transformed Model (*passed Ramsey RESET test*).
++ This model included all transformations suggested in the Data Transformation step.  
+
+### Variable Selection
+To get an even stronger model, we performed backward stepwise variable selection on the models with Y transformed and with the model that passed the RESET test. We performed stepwise using both AIC and BIC criteria, adding the following to our list of potential models:
+
+5. Model with only Y variable transformed - Stepwise AIC
+6. Model with only Y variable transformed - Stepwise BIC
+7. Full Transformed Model - Stepwise AIC 
+8. Full Transformed Model - Stepwise BIC
+
+### Regularization
+We also used the tranformed data model variables as inputs and created the following two additional models using Ridge and Lasso mechanisms:
+
+9. Ridge Model
+10. Lasso Model
+
+
+## Model Comparison
+
+We ran 1000 simulations, splitting our data into 80% train/20% test data, and used the mean resulting RMSE values to compare our models.
+
+We observed the lowest RMSE values for the Ridge Model, Lasso Model and Model with only Y variable transformed - Stepwise AIC, each with RMSE values between 0.42 and 0.46.
+
+```{r echo=FALSE}
+library(fastDummies)
+
+# Load raw data
+rawdata <- read.csv("math.csv")
+
+# Remove all the rows with Final Grade=0 to clean the data
+clean.rawdata = subset(rawdata, rawdata$G3 > 0)
+
+# Remove G1(First Period Grade) and G2(Second Period Grade) from data
+datawo_g1g2 <- clean.rawdata[,!(colnames(clean.rawdata) %in% c("G1","G2"))]
+
+# Convert binary variables to 0/1 values and nominal variables to Dummy Variables
+dummycolconversion <- dummy_cols(datawo_g1g2, select_columns= c("school","sex","address","famsize","Pstatus","schoolsup","famsup","paid","activities","nursery","higher","internet","romantic","Mjob","Fjob","reason","guardian"),remove_first_dummy = TRUE)
+
+# final_data is the cleaned data with minor transformations to be used for continuous(Y) variable analysis.
+final_data <- dummycolconversion[,!names(dummycolconversion) %in% c("school","sex","address","famsize","Pstatus","schoolsup","famsup","paid","activities","nursery","higher","internet","romantic","Mjob","Fjob","reason","guardian")]
+
+
+# Create new dataset "binary_data", changing variable G3 to 1/0 values for pass/fail analysis. Score greater than 9 is set to pass(1) and 9 or lower is set to fail(0). binary_data is our cleaned data with minor transformations to be used for binary(Y) variable analysis.
+binary_data <- final_data
+binary_data$G3 <- replace(final_data$G3>9,1,0)
+
+library(moderndive)
+model_full <- lm(G3~.,data=final_data)
+#summary(model_full)
+
+# Full Transfromed model based on passed RESET test
+full_model_trans <- lm(sqrt(G3)~.+I(poly(absences,3))-absences+I(poly(failures,2))-failures+I(poly(studytime,2))-studytime+I(poly(goout,2))-goout,data=final_data)
+
+# Fully-transformed model
+Y_model_trans = lm(sqrt(G3)~., data=final_data)
+
+# Model based on the backward stepwise and AIC approach by transforming only Y variable
+Y_model_trans_AIC = step(Y_model_trans,direction="backward", trace = 0)
+
+
+# Model based on the backward stepwise and BIC approach by transforming only Y variable
+n = nrow(final_data)
+Y_model_trans_BIC = step(Y_model_trans,direction="backward",k=log(n), trace = 0)
+
+
+# Model based on the backward stepwise and AIC approach for full transformed model 
+full_model_trans_AIC = step(full_model_trans,direction="backward", trace = 0)
+
+# Model based on the backward stepwise and AIC approach for full transformed model
+full_model_trans_BIC = step(full_model_trans,direction="backward",k=log(n), trace = 0)
+
+
+library(glmnet)
+library(dplyr)
+
+X <- as.matrix(select(final_data, -G3))
+y <- as.matrix(log(select(final_data, G3)))
+
+X <- model.matrix(full_model_trans)
+X <- X[,-1]
+y <- as.matrix(sqrt(final_data$G3))
+
+
+# Setting alpha = 0 implements ridge regression
+ridge_cv <- cv.glmnet(X, y, alpha = 0)
+
+# Fit final model, get its sum of squared residuals and multiple R-squared
+ridge_model <- glmnet(X, y, alpha = 0, lambda = ridge_cv$lambda.min, standardize = TRUE)
+#coef(ridge_model)
+
+# Setting alpha = 1 implements lasso regression
+lasso_cv <- cv.glmnet(X, y, alpha = 1)
+
+# Fits the Lasso model
+lasso_model <- glmnet(X, y, alpha = 1, lambda = lasso_cv$lambda.min, standardize = TRUE)
+#coef(lasso_model)
+
+
+
+library(Metrics)
+nsims = 10
+
+sse_Y_trans = sse_Y_AIC = sse_Y_BIC = sse_full_trans = sse_full_AIC = sse_full_BIC = sse_Ridge = sse_Lasso = vector()
+
+# LOOCV RMSE function
+calc_loocv_rmse = function(model) {
+sqrt(mean((resid(model) / (1 - hatvalues(model))) ^ 2))
+}
+
+for (i in 1:nsims) {
+# Build train and test  
+sample <- sample.int(n=nrow(final_data),size=floor(0.8*nrow(final_data)))
+final_data.train <- final_data[sample,]
+final_data.test <- final_data[-sample,]
+
+# Y-Transform model
+Y_model_trans_train = lm(sqrt(G3)~., data=final_data.train)
+
+# Full transform model
+full_model_trans_train <- lm(sqrt(G3)~.+I(poly(absences,3))-absences+I(poly(failures,2))-failures+I(poly(studytime,2))-studytime+I(poly(goout,2))-goout,data=final_data.train)
+
+# Stepwise on Y transform
+Y_model_trans_AIC_train = step(Y_model_trans_train,direction="backward", trace = 0)
+
+Y_model_trans_BIC_train = step(Y_model_trans_train,direction="backward",k=log(n), trace = 0)
+
+# Stepwise on full transform
+full_model_trans_AIC_train = step(full_model_trans_train,direction="backward", trace = 0)
+
+full_model_trans_BIC_train = step(full_model_trans_train,direction="backward",k=log(n), trace = 0)
+
+
+# Ridge/lasso data
+X <- model.matrix(Y_model_trans_train)
+X <- X[,-1]
+y <- as.matrix(sqrt(final_data.train$G3))
+
+Y_model_trans_test = lm(sqrt(G3)~., data=final_data.test)
+X_new <-model.matrix(Y_model_trans_test)
+X_new <- X_new[,-1]
+
+ridge_model_train <- glmnet(X, y, alpha = 0, lambda = ridge_cv$lambda.min, standardize = TRUE)
+
+lasso_model_train <- glmnet(X, y, alpha = 1, lambda = lasso_cv$lambda.min, standardize = TRUE)
+
+
+# RMSE Formula
+sse_Y_trans[i] = rmse(sqrt(final_data.test$G3), predict(Y_model_trans_train, data=final_data.test, type="response"))
+sse_Y_AIC[i] = rmse(sqrt(final_data.test$G3), predict(Y_model_trans_AIC_train, newdata=final_data.test, type="response"))
+sse_Y_BIC[i] = rmse(sqrt(final_data.test$G3), predict(Y_model_trans_BIC_train, newdata=final_data.test, type="response"))
+sse_full_trans[i] = rmse(sqrt(final_data.test$G3), predict(full_model_trans_train, newdata=final_data.test, type="response"))
+sse_full_AIC[i] = rmse(sqrt(final_data.test$G3), predict(full_model_trans_AIC_train, newdata=final_data.test, type="response"))
+sse_full_BIC[i] = rmse(sqrt(final_data.test$G3), predict(full_model_trans_BIC_train, newdata=final_data.test, type="response"))
+sse_Ridge[i] = rmse(sqrt(final_data.test$G3), predict(ridge_model_train, newx = X_new, type="response"))
+sse_Lasso[i] = rmse(sqrt(final_data.test$G3), predict(lasso_model_train, newx = X_new, type="response"))
+}
+
+rmse_values <- c(Y_Trans = mean(sse_Y_trans), Y_AIC = mean(sse_Y_AIC), Y_BIC = mean(sse_Y_BIC), full_Trans = mean(sse_full_trans), full_AIC = mean(sse_full_AIC), full_BIC = mean(sse_full_BIC), Ridge = mean(sse_Ridge), Lasso = mean(sse_Lasso))
+
+
+rmse_values
+
+
+```
+
+# Diagnostics
+
+We ran residulas plots on the Model with only Y variable transformed - Stepwise AIC, one of the models with the lowest RMSE. We also looked for influentual points by calculating the Cook's Distance.
+We decided to remove only the most extreme influential point (point #75) because we had limited visibity to the rationale we could use to remove points with only slightly high Cook's distances. When we attempted to remove more points and rerun the model, more variables would move above the Cook's distance threshold. We therefore determined that it would be best to only remove point #75.
+
+
+```{r echo=FALSE}
+par(mfrow=c(1,2))
+plot(Y_model_trans_AIC, which=1)
+n_obsv = nrow(final_data)
+cooks_d = cooks.distance(Y_model_trans_AIC)
+plot(cooks_d, pch=".", cex=2)
+abline(h = 4/n_obsv, col="red")  # add cutoff line
+text(x=1:length(cooks_d)+1, y=cooks_d, labels=ifelse(cooks_d>4/n_obsv, names(cooks_d),""), col="red")
+
+data_noInf <- final_data[-75, ]
+
+n_noInf = nrow(data_noInf)
+
+X_N <- as.matrix(select(data_noInf, -G3))
+y_N <- as.matrix(log(select(data_noInf, G3)))
+
+
+# Setting alpha = 0 implements ridge regression
+ridge_cv_NI <- cv.glmnet(X_N, y_N, alpha = 0)
+
+lasso_cv_NI <- cv.glmnet(X_N, y_N, alpha = 1)
+
+
+```
+
+\pagebreak
+
+## Rerunning Simulations on Selected Models
+
+After removing the extreme influential point, We reran the simulation on our three best models.
+We discovered that even without point #75, the RMSE for the Ridge, Lasso and Model with only Y variable transformed - Stepwise AIC did not change significantly.
+
+```{r echo=FALSE}
+nsims = 10
+data_noInf <- final_data[-75, ]
+sse_Y_AIC_NI = sse_Ridge_NI = sse_Lasso_NI = vector()
+
+
+for (i in 1:nsims) {
+# Build train and test  
+sample <- sample.int(n=nrow(data_noInf),size=floor(0.65*nrow(data_noInf)))
+data_noInf.train <- data_noInf[sample,]
+data_noInf.test <- data_noInf[-sample,]
+
+# Y-Transform model
+Y_trans_train_NI = lm(sqrt(G3)~., data=data_noInf.train)
+
+# Stepwise on Y transform
+Y_trans_AIC_train_NI = step(Y_trans_train_NI,direction="backward", trace = 0)
+
+# Ridge/lasso data
+X_NI <- model.matrix(Y_trans_train_NI)
+X_NI <- X_NI[,-1]
+y_NI <- as.matrix(sqrt(data_noInf.train$G3))
+
+Y_trans_test_NI = lm(sqrt(G3)~., data=data_noInf.test)
+X_NI_new <-model.matrix(Y_trans_test_NI)
+X_NI_new <- X_NI_new[,-1]
+
+ridge_train_NI <- glmnet(X_NI, y_NI, alpha = 0, lambda = ridge_cv_NI$lambda.min, standardize = TRUE)
+
+lasso_train_NI <- glmnet(X_NI, y_NI, alpha = 1, lambda = lasso_cv_NI$lambda.min, standardize = TRUE)
+
+
+# RMSE Formula
+sse_Y_AIC_NI[i] = rmse(sqrt(data_noInf.test$G3), predict(Y_trans_AIC_train_NI, newdata=data_noInf.test, type="response"))
+sse_Ridge_NI[i] = rmse(sqrt(data_noInf.test$G3), predict(ridge_train_NI, newx = X_NI_new, type="response"))
+sse_Lasso_NI[i] = rmse(sqrt(data_noInf.test$G3), predict(lasso_train_NI, newx = X_NI_new, type="response"))
+}
+
+rmse_values_NI <- c(Y_AIC = mean(sse_Y_AIC_NI), Ridge = mean(sse_Ridge_NI), Lasso = mean(sse_Lasso_NI))
+
+
+rmse_values_NI
+```
+
+
+# Binary Models - Logistic and Neural Networks
+We also attempted to develop a model to predict if students would pass or fail. In Portugal, students fail if they receive a score below 10, and pass with a 10 or higher. We used Logistic Regression and Neural Networks to develop the model, applying these methods to the tranformed data set that passed the RESET test.
+
+However, the  accuracy of the model remained under 74%. We used an 80% train/20% test data cross-validation to validate the models. The Logistic model performed better than the neural network, with accuracy between 70-74% in the 1000 simulations.
+
+```{r echo=FALSE}
+
+library(MASS)
+library(neuralnet)
+binary_data <- final_data
+
+#We changed variable G3 to 1/0 values for pass/fail analysis. Score greater than 9 was set to pass(1) and lower was set to fail(0).binary_data is our cleaned data with minor transformations to be used for binary(Y) variable analysis.
+
+binary_data$G3 <- replace(final_data$G3>9,1,0)
+
+# Instantiate "normalize" function
+ normalize = function(x){
+     return((x-min(x))/(max(x)-min(x)) )
+ }
+
+
+logistic_accuracy = nn_accuracy = rep(NA,10)
+for (i in 1:10){
+sample <- sample.int(n=nrow(binary_data),size=floor(0.8*nrow(binary_data)), replace =F )
+binary_data.train <- binary_data[sample,]
+binary_data.test <- binary_data[-sample,]
+
+
+logistic_model = glm(G3~.+I(poly(absences,3))-absences+I(poly(failures,2))-failures
+                     +I(poly(studytime,2))-studytime+I(poly(goout,2))-goout, family = binomial(link = "logit"), data = binary_data.train)
+logistic_model_step = step(logistic_model,trace=F)
+logisticpredict = round(predict(logistic_model_step,newdata=binary_data.test,type="response"))
+
+#Running the Neural Netwwork for the 
+#nn_model <- neuralnet(G3~.+goout^2+absences^2+failures^2+absences^3+studytime^2, #data=binary_data.train, hidden = c(6,1), linear.output = FALSE, threshold = 0.01)
+nn_model <- neuralnet(G3~., data=binary_data.train, hidden = c(6,1), linear.output = FALSE, threshold = 0.01)
+npredict = round(predict(nn_model, newdata=binary_data.test, type="response"))
+
+
+logistic_accuracy[i] = sum(diag(table(binary_data.test$G3,logisticpredict)))/sum(table(binary_data.test$G3,logisticpredict))
+nn_accuracy[i] = sum(diag(table(binary_data.test$G3, npredict)))/sum(table(binary_data.test$G3, npredict))
+
+}
+
+mean_lr_accuracy <- mean(logistic_accuracy)
+mean_nn_accuracy <- mean(nn_accuracy)
+binary_results <- cbind(logistic_Regress=mean_lr_accuracy,Neural_Nets = mean_nn_accuracy)
+binary_results
+plot(nn_model)
+
+```
+
+# Conclusion
+We first began by using $R^2$ to compare our models but we never observed $R^2$ values higher than 0.35. We noticed that $R^2$ was decreasing when we added variables, leading us to belive that the data quality may have been poor. We then decided to use RMSE as criteria to compare the predictive ability of our models, since the RMSE values seemed satisfactory (*between 0.4 and 0.6*). We noticed the performance of the Ridge and Lasso with transformed variables (based on RESET test) performed similarly or better than regular regression models, with RMSE values between 0.4 and 0.5. The other models also produced RMSE values between 0.4 and 0.6.  
+
+When testing binary models, we observed accuracy levels between 65% and 74%. Logistic regression performed better than the Neural Network. The Neural Network performance did not improve even after increasing the intermediate steps.
+
+
+# Challenges 
+We faced a few challenges while performing the data analysis and model building processes. Key factors included lack of domain knowledge and lack of visibility as to how data was collected and which factors may have driven the data values. We noticed that our results were not improving even after removing outliers and rerunning simulations. 
+The overall quality of the data and the nature of variables also seemed to suggest that this may not be a perfect dataset for linear analysis.
+
+
+# Next Steps - Enhancement
+We believe the models that we developed might be further improved on by looking into the relationships between variables, understanding the data collection mechanisms, and adding more interaction terms. One other way to improve these models further could be the use of other statistical techniques such as Support Vector Machines, Gradient Boosting etc. Those were out of scope for our analysis.
+
+
+# References
+
+*http://www3.dsi.uminho.pt/pcortez/student.pdf*
+
+*http://archive.ics.uci.edu/ml/datasets/student+performance*
+
+
+
+
+\pagebreak
+# Appendix I - Data Variable Definitions 
+
+Dataset Link - *https://archive.ics.uci.edu/ml/datasets/Student+Performance*
+
+* school - student's school (binary: "GP" - Gabriel Pereira or "MS" - Mousinho da Silveira)
+* sex - student's sex (binary: "F" - female or "M" - male)
+* age - student's age (numeric: from 15 to 22)
+* address - student's home address type (binary: "U" - urban or "R" - rural)
+* famsize - family size (binary: "LE3" - less or equal to 3 or "GT3" - greater than 3)
+* Pstatus - parent's cohabitation status (binary: "T" - living together or "A" - apart)
+* Medu - mother's education (numeric: 0 - none,  1 - primary education (4th grade), 2 - 5th to 9th grade, 3 - secondary education or 4 - higher education)
+* Fedu - father's education (numeric: 0 - none,  1 - primary education (4th grade), 2 - 5th to 9th grade, 3 - secondary education or 4 - higher education)
+* Mjob - mother's job (nominal: "teacher", "health" care related, civil "services" (e.g. administrative or police), "at_home" or "other")
+* Fjob - father's job (nominal: "teacher", "health" care related, civil "services" (e.g. administrative or police), "at_home" or "other")
+* reason - reason to choose this school (nominal: close to "home", school "reputation", "course" preference or "other")
+* guardian - student's guardian (nominal: "mother", "father" or "other")
+* traveltime - home to school travel time (numeric: 1 - <15 min., 2 - 15 to 30 min., 3 - 30 min. to 1 hour, or 4 - >1 hour)
+* studytime - weekly study time (numeric: 1 - <2 hours, 2 - 2 to 5 hours, 3 - 5 to 10 hours, or 4 - >10 hours)
+* failures - number of past class failures (numeric: n if 1<=n<3, else 4)
+* schoolsup - extra educational support (binary: yes or no)
+* famsup - family educational support (binary: yes or no)
+* paid - extra paid classes within the course subject (Math or Portuguese) (binary: yes or no)
+* activities - extra-curricular activities (binary: yes or no)
+* nursery - attended nursery school (binary: yes or no)
+* higher - wants to take higher education (binary: yes or no)
+* internet - Internet access at home (binary: yes or no)
+* romantic - with a romantic relationship (binary: yes or no)
+* famrel - quality of family relationships (numeric: from 1 - very bad to 5 - excellent)
+* freetime - free time after school (numeric: from 1 - very low to 5 - very high)
+* goout - going out with friends (numeric: from 1 - very low to 5 - very high)
+* Dalc - workday alcohol consumption (numeric: from 1 - very low to 5 - very high)
+* Walc - weekend alcohol consumption (numeric: from 1 - very low to 5 - very high)
+* health - current health status (numeric: from 1 - very bad to 5 - very good)
+* absences - number of school absences (numeric: from 0 to 93)
+
+\pagebreak
+# Appendix II - Data Cleaning & Transformations
+
+```{r}
+
+library(fastDummies)
+
+# Load raw data
+rawdata <- read.csv("math.csv")
+
+# Remove all rows with Final Grade=0 to clean the data
+clean.rawdata = subset(rawdata, rawdata$G3 > 0)
+
+# Remove G1(First Period Grade) and G2(Second Period Grade) from data
+datawo_g1g2 <- clean.rawdata[,!(colnames(clean.rawdata) %in% c("G1","G2"))]
+
+# Convert binary variables to 0/1 values and Nominal Variables to Dummy Variables
+dummycolconversion <- dummy_cols(datawo_g1g2, select_columns = c("school", "sex", "address", "famsize", "Pstatus", "schoolsup", "famsup", "paid", "activities", "nursery", "higher", "internet", "romantic", "Mjob", "Fjob", "reason", "guardian"), remove_first_dummy = TRUE)
+
+# final_data is our cleaned data with minor transformations to be used for continuous(Y) variable analysis.
+final_data <- dummycolconversion[,!names(dummycolconversion) %in% c("school", "sex", "address", "famsize", "Pstatus", "schoolsup", "famsup", "paid", "activities", "nursery", "higher", "internet", "romantic", "Mjob", "Fjob", "reason", "guardian")]
+
+# New dataset "binary_data", where we changed variable G3 to 1 or 0 values for pass/fail analysis. Score greater than 9 was set to pass (1) and 9 or lower was set to fail (0). binary_data is our cleaned data with minor transformations to be used for binary(Y) variable analysis.
+binary_data <- final_data
+binary_data$G3 <- replace(final_data$G3>9,1,0)
+```
+
+\pagebreak
+# Appendix III - Data Plots, VIF & VCF Validations
+
+```{r echo=TRUE}
+clean.rawdata = subset(rawdata, rawdata$G3 > 0)
+par(mfrow=c(2,2))
+plot(clean.rawdata$G3~clean.rawdata$sex)
+plot(clean.rawdata$G3~clean.rawdata$Medu)
+plot(clean.rawdata$G3~clean.rawdata$Fedu)
+plot(clean.rawdata$G3~clean.rawdata$Mjob)
+plot(clean.rawdata$G3~clean.rawdata$Fjob)
+plot(clean.rawdata$G3~clean.rawdata$reason)
+plot(clean.rawdata$G3~clean.rawdata$failures)
+boxplot(G3~goout,data=clean.rawdata, xlab="G3", ylab="goout")
+plot(clean.rawdata$G3~clean.rawdata$absences)
+boxplot(G3~health,data=clean.rawdata, xlab="G3", ylab="health")
+boxplot(G3~schoolsup,data=clean.rawdata, xlab="G3", ylab="schoolsup")
+boxplot(G3~famsup,data=clean.rawdata, xlab="G3", ylab="famsup")
+
+```
+
+
+```{r}
+library(car)
+raw_model <- lm(G3~.,data=final_data)
+vif(raw_model)
+ncvTest(raw_model)
+```
+
+
+\pagebreak
+# Appendix IV - Data Tranformations
+
+```{r}
+library(moderndive)
+# Full model
+model_full <- lm(G3~.,data=final_data)
+summary(model_full)
+
+
+library(lmtest)
+
+# Testing model with transformed x variables
+resettest(model_full)
+
+# Power Transformation test for the Y variable to detect transformation
+summary(powerTransform(model_full))
+
+# Fully-transformed model
+Y_model_trans = lm(sqrt(G3)~., data=final_data)
+
+get_regression_table(Y_model_trans)
+
+# Reset test on fully transformed model
+resettest(Y_model_trans)
+
+
+```
+
+
+\pagebreak
+# Appendix V - Overall F Test for Dropping all Variable at Once
+
+```{r}
+# Full Model with no transformations
+model_full <- lm(G3~.,data=final_data)
+summary(model_full)
+
+# Reduced model after dropping all the variables at once
+model_reduced = lm(G3~absences+studytime+failures+schoolsup_no+famsup_yes
+                   +goout+Fjob_other+Fjob_services+Fjob_health+health, data = final_data)
+get_regression_table(model_reduced)
+anova(model_full, model_reduced)
+
+
+```
+
+\pagebreak
+# Appendix VI - Generalized Models based on transformations
+
+```{r}
+
+# Full Transfromed model based on passed RESET test
+full_model_trans <- lm(sqrt(G3)~.+I(poly(absences,3))-absences
+                       +I(poly(failures,2))-failures+I(poly(studytime,2))
+                       -studytime+I(poly(goout,2))-goout,data=final_data)
+get_regression_table(full_model_trans)
+
+
+# Model based on the backward stepwise and AIC approach by transforming only Y variable
+Y_model_trans_AIC = step(Y_model_trans,direction="backward", trace = 0)
+get_regression_table(Y_model_trans_AIC)
+
+# Model based on the backward stepwise and BIC approach by transforming only Y variable
+n = nrow(final_data)
+Y_model_trans_BIC = step(Y_model_trans,direction="backward",k=log(n), trace = 0)
+get_regression_table(Y_model_trans_BIC)
+
+# Model based on the backward stepwise and AIC approach for full transformed model 
+full_model_trans_AIC = step(full_model_trans,direction="backward", trace = 0)
+get_regression_table(full_model_trans_AIC)
+
+# Model based on the backward stepwise and AIC approach for full transformed model
+full_model_trans_BIC = step(full_model_trans,direction="backward",k=log(n), trace = 0)
+get_regression_table(full_model_trans_BIC)
+```
+
+\pagebreak
+# Appendix VII - Regularization Models(Ridge and Lasso)
+
+```{r}
+# Regularuization Models - Ridge and Lass on Full Transformed Model
+library(glmnet)
+library(dplyr)
+
+
+X <- model.matrix(full_model_trans)
+X <- X[,-1]
+y <- as.matrix(sqrt(final_data$G3))
+
+
+# Setting alpha = 0 implements ridge regression
+ridge_cv <- cv.glmnet(X, y, alpha = 0)
+
+# Fit final model, get its sum of squared residuals and multiple R-squared
+ridge_model <- glmnet(X, y, alpha = 0, lambda = ridge_cv$lambda.min, standardize = TRUE)
+coef(ridge_model)
+
+# Setting alpha = 1 implements lasso regression
+lasso_cv <- cv.glmnet(X, y, alpha = 1)
+
+# Fits the Lasso model
+lasso_model <- glmnet(X, y, alpha = 1, lambda = lasso_cv$lambda.min, standardize = TRUE)
+coef(lasso_model)
+
+
+```
+
+
+\pagebreak
+# Appendix VIII - Simulation of General an regularization Models
+
+```{r}
+
+library(Metrics)
+
+# Number of simulations - we used 1000 for analysis
+nsims = 10
+
+sse_Y_trans = sse_Y_AIC = sse_Y_BIC = sse_full_trans = sse_full_AIC = sse_full_BIC = sse_Ridge = sse_Lasso = vector()
+
+# LOOCV RMSE function
+calc_loocv_rmse = function(model) {
+sqrt(mean((resid(model) / (1 - hatvalues(model))) ^ 2))
+}
+
+for (i in 1:nsims) {
+# Build train and test  
+sample <- sample.int(n=nrow(final_data),size=floor(0.8*nrow(final_data)))
+final_data.train <- final_data[sample,]
+final_data.test <- final_data[-sample,]
+
+# Y-Transform model
+Y_model_trans_train = lm(sqrt(G3)~., data=final_data.train)
+
+# Full transform model
+full_model_trans_train <- lm(sqrt(G3)~.+I(poly(absences,3))-absences+I(poly(failures,2))-failures+I(poly(studytime,2))-studytime+I(poly(goout,2))-goout,data=final_data.train)
+
+# Stepwise on Y transform
+Y_model_trans_AIC_train = step(Y_model_trans_train,direction="backward", trace = 0)
+
+Y_model_trans_BIC_train = step(Y_model_trans_train,direction="backward",k=log(n), trace = 0)
+
+# Stepwise on full transform
+full_model_trans_AIC_train = step(full_model_trans_train,direction="backward", trace = 0)
+
+full_model_trans_BIC_train = step(full_model_trans_train,direction="backward",k=log(n), trace = 0)
+
+
+# Ridge/lasso data
+X <- model.matrix(Y_model_trans_train)
+X <- X[,-1]
+y <- as.matrix(sqrt(final_data.train$G3))
+
+Y_model_trans_test = lm(sqrt(G3)~., data=final_data.test)
+X_new <-model.matrix(Y_model_trans_test)
+X_new <- X_new[,-1]
+
+ridge_model_train <- glmnet(X, y, alpha = 0, lambda = ridge_cv$lambda.min, standardize = TRUE)
+
+lasso_model_train <- glmnet(X, y, alpha = 1, lambda = lasso_cv$lambda.min, standardize = TRUE)
+
+
+# RMSE Formula
+sse_Y_trans[i] = rmse(sqrt(final_data.test$G3), predict(Y_model_trans_train, data=final_data.test, type="response"))
+sse_Y_AIC[i] = rmse(sqrt(final_data.test$G3), predict(Y_model_trans_AIC_train, newdata=final_data.test, type="response"))
+sse_Y_BIC[i] = rmse(sqrt(final_data.test$G3), predict(Y_model_trans_BIC_train, newdata=final_data.test, type="response"))
+sse_full_trans[i] = rmse(sqrt(final_data.test$G3), predict(full_model_trans_train, newdata=final_data.test, type="response"))
+sse_full_AIC[i] = rmse(sqrt(final_data.test$G3), predict(full_model_trans_AIC_train, newdata=final_data.test, type="response"))
+sse_full_BIC[i] = rmse(sqrt(final_data.test$G3), predict(full_model_trans_BIC_train, newdata=final_data.test, type="response"))
+sse_Ridge[i] = rmse(sqrt(final_data.test$G3), predict(ridge_model_train, newx = X_new, type="response"))
+sse_Lasso[i] = rmse(sqrt(final_data.test$G3), predict(lasso_model_train, newx = X_new, type="response"))
+}
+
+# Table with means of RMSE values 
+rmse_values <- c(Y_Trans = mean(sse_Y_trans), Y_AIC = mean(sse_Y_AIC), Y_BIC = mean(sse_Y_BIC), full_Trans = mean(sse_full_trans), full_AIC = mean(sse_full_AIC), full_BIC = mean(sse_full_BIC), Ridge = mean(sse_Ridge), Lasso = mean(sse_Lasso))
+rmse_values
+
+```
+
+\pagebreak
+# Appendix IX - Model Diagnostics
+
+```{r}
+# Residuals plot for model with transformed Y and stepback AIC
+plot(Y_model_trans_AIC, which=1)
+
+# Cook's distance plot
+n_obsv = nrow(final_data)
+cooks_d = cooks.distance(Y_model_trans_AIC)
+plot(cooks_d, pch=".", cex=2, main="Influential Obs by Cooks distance")
+abline(h = 4/n_obsv, col="red")  # add cutoff line
+text(x=1:length(cooks_d)+1, y=cooks_d, labels=ifelse(cooks_d>4/n_obsv, names(cooks_d),""), col="red")
+
+# Dataset with influential point removed
+data_noInf <- final_data[-75, ]
+
+```
+
+
+\pagebreak
+# Appendix X - Re-simulation of Regular Models
+```{r}
+# Number of simulations - we used 1000 for analysis
+nsims = 10
+
+sse_Y_AIC_NI = sse_Ridge_NI = sse_Lasso_NI = vector()
+
+
+for (i in 1:nsims) {
+# Build train and test  
+sample <- sample.int(n=nrow(data_noInf),size=floor(0.65*nrow(data_noInf)))
+data_noInf.train <- data_noInf[sample,]
+data_noInf.test <- data_noInf[-sample,]
+
+# Y-Transform model
+Y_trans_train_NI = lm(sqrt(G3)~., data=data_noInf.train)
+
+# Stepwise on Y transform
+Y_trans_AIC_train_NI = step(Y_trans_train_NI,direction="backward", trace = 0)
+
+# Ridge/lasso data
+X_NI <- model.matrix(Y_trans_train_NI)
+X_NI <- X_NI[,-1]
+y_NI <- as.matrix(sqrt(data_noInf.train$G3))
+
+Y_trans_test_NI = lm(sqrt(G3)~., data=data_noInf.test)
+X_NI_new <-model.matrix(Y_trans_test_NI)
+X_NI_new <- X_NI_new[,-1]
+
+ridge_train_NI <- glmnet(X_NI, y_NI, alpha = 0, lambda = ridge_cv_NI$lambda.min, standardize = TRUE)
+
+lasso_train_NI <- glmnet(X_NI, y_NI, alpha = 1, lambda = lasso_cv_NI$lambda.min, standardize = TRUE)
+
+
+# RMSE Formula
+sse_Y_AIC_NI[i] = rmse(sqrt(data_noInf.test$G3), predict(Y_trans_AIC_train_NI, newdata=data_noInf.test, type="response"))
+sse_Ridge_NI[i] = rmse(sqrt(data_noInf.test$G3), predict(ridge_train_NI, newx = X_NI_new, type="response"))
+sse_Lasso_NI[i] = rmse(sqrt(data_noInf.test$G3), predict(lasso_train_NI, newx = X_NI_new, type="response"))
+}
+
+# Table with means of RMSE values 
+rmse_values_NI <- c(Y_AIC = mean(sse_Y_AIC_NI), Ridge = mean(sse_Ridge_NI), Lasso = mean(sse_Lasso_NI))
+rmse_values_NI
+```
+
+
+
+
+
+\pagebreak
+# Appendix XI - Simulation of Binary Models( Logistic and Neural Nets)
+
+
+```{r}
+library(MASS)
+library(neuralnet)
+binary_data <- final_data
+
+#We changed variable G3 to 1/0 values for pass/fail analysis. Score greater than 9 was set to pass(1) and lower was set to fail(0).binary_data is our cleaned data with minor transformations to be used for binary(Y) variable analysis.
+
+binary_data$G3 <- replace(final_data$G3>9,1,0)
+
+
+# Instantiate "normalize" function
+ normalize = function(x){
+     return((x-min(x))/(max(x)-min(x)) )
+ }
+
+logistic_accuracy = nn_accuracy = rep(NA,10)
+
+# We used 1000 simulations for analysis
+for (i in 1:10){
+sample <- sample.int(n=nrow(binary_data),size=floor(0.8*nrow(binary_data)), replace =F )
+binary_data.train <- binary_data[sample,]
+binary_data.test <- binary_data[-sample,]
+
+
+logistic_model = glm(G3~.+I(poly(absences,3))-absences+I(poly(failures,2))-failures
+                     +I(poly(studytime,2))-studytime+I(poly(goout,2))-goout, family = binomial(link = "logit"), data = binary_data.train)
+logistic_model_step = step(logistic_model,trace=F)
+logisticpredict = round(predict(logistic_model_step,newdata=binary_data.test,type="response"))
+
+# Running the Neural Netwwork 
+nn_model <- neuralnet(G3~., data=binary_data.train, hidden = c(6,1), linear.output = FALSE, threshold = 0.01)
+npredict = round(predict(nn_model, newdata=binary_data.test, type="response"))
+
+
+logistic_accuracy[i] = sum(diag(table(binary_data.test$G3,logisticpredict)))/sum(table(binary_data.test$G3,logisticpredict))
+nn_accuracy[i] = sum(diag(table(binary_data.test$G3, npredict)))/sum(table(binary_data.test$G3, npredict))
+
+}
+
+mean_lr_accuracy <- mean(logistic_accuracy)
+mean_nn_accuracy <- mean(nn_accuracy)
+binary_results <- cbind(logistic_Regress=mean_lr_accuracy,Neural_Nets = mean_nn_accuracy)
+binary_results
+plot(nn_model)
+```
+
